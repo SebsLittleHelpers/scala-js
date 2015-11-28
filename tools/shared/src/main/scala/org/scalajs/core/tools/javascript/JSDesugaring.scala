@@ -19,6 +19,7 @@ import ir.Position._
 import ir.Transformers._
 import ir.Trees._
 import ir.Types._
+import Definitions._
 
 import org.scalajs.core.tools.sem._
 import CheckedBehavior._
@@ -117,28 +118,44 @@ private[javascript] object JSDesugaring {
    */
   private[javascript] def desugarToFunction(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
-      params: List[ParamDef], body: Tree, isStat: Boolean)(
+      params: List[ParamDef], body: Tree, isStat: Boolean,
+      enclosingMethodName: String, isStatic: Boolean)(
       implicit pos: Position): js.Function = {
     desugarToFunction(classEmitter, enclosingClassName,
-        None, params, body, isStat)
+        None, params, body, isStat, enclosingMethodName, isStatic)
   }
 
   /** Desugars parameters and body to a JS function.
    */
   private[javascript] def desugarToFunction(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
-      thisIdent: Option[js.Ident], params: List[ParamDef],
-      body: Tree, isStat: Boolean)(
+      thisIdent: Option[js.Ident], params: List[ParamDef], body: Tree,
+      isStat: Boolean, enclosingMethodName: String, isStatic: Boolean)(
       implicit pos: Position): js.Function = {
-    new JSDesugar(classEmitter, enclosingClassName,
-        thisIdent).desugarToFunction(params, body, isStat)
+    new JSDesugar(classEmitter, enclosingClassName, enclosingMethodName,
+        isStatic, thisIdent).desugarToFunction(params, body, isStat)
+  }
+
+  private[javascript] def desugarToConstructor(
+      classEmitter: ScalaJSClassEmitter, enclosingClassName: String, 
+      params: List[ParamDef], body: Tree, superCall: js.Tree,
+      enclosingMethodName: String, isStatic: Boolean)(
+      implicit pos: Position): js.Function = {
+    val js.Function(args, newBody) = new JSDesugar(classEmitter,
+      enclosingClassName, enclosingMethodName, isStatic, None).
+      desugarToFunction(params, body, isStat = true)
+    js.Function(args, js.Block(List(superCall, newBody)))
   }
 
   /** Desugars a statement or an expression. */
   private[javascript] def desugarTree(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
-      tree: Tree, isStat: Boolean): js.Tree = {
-    val desugar = new JSDesugar(classEmitter, enclosingClassName, None)
+      tree: Tree, isStat: Boolean, enclosingMethodName: String,
+      isStatic: Boolean): js.Tree = {
+    val desugar =
+      new JSDesugar(classEmitter, enclosingClassName, enclosingMethodName,
+          isStatic, None)
+
     if (isStat)
       desugar.transformStat(tree)(Env.empty)
     else
@@ -153,6 +170,7 @@ private[javascript] object JSDesugaring {
 
   private class JSDesugar(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
+      enclosingMethodName: String, isStatic: Boolean,
       thisIdent: Option[js.Ident]) {
 
     private val semantics = classEmitter.semantics
@@ -1552,8 +1570,13 @@ private[javascript] object JSDesugaring {
         // Scala expressions
 
         case New(cls, ctor, args) =>
-          js.Apply(js.New(encodeClassVar(cls.className), Nil) DOT ctor,
-              args map transformExpr)
+          if (classEmitter.usesJSConstructorOpt(cls.className,
+              enclosingClassName, enclosingMethodName, isStatic)) {
+            js.New(encodeClassVar(cls.className), args map transformExpr)
+          } else {
+            js.Apply(js.New(encodeClassVar(cls.className), Nil) DOT ctor,
+                args map transformExpr)
+          }
 
         case LoadModule(cls) =>
           genLoadModule(cls.className)
@@ -2030,15 +2053,15 @@ private[javascript] object JSDesugaring {
     )
 
     def genClassDataOf(cls: ReferenceType)(implicit pos: Position): js.Tree = {
-      cls match {
-        case ClassType(className) =>
-          envField("d", className)
-        case ArrayType(base, dims) =>
-          (1 to dims).foldLeft(envField("d", base)) { (prev, _) =>
-            js.Apply(js.DotSelect(prev, js.Ident("getArrayOf")), Nil)
-          }
-      }
+    cls match {
+      case ClassType(className) =>
+        envField("d", className)
+      case ArrayType(base, dims) =>
+        (1 to dims).foldLeft(envField("d", base)) { (prev, _) =>
+          js.Apply(js.DotSelect(prev, js.Ident("getArrayOf")), Nil)
+        }
     }
+  }
 
     private def getSuperClassOfJSClass(linkedClass: LinkedClass)(
         implicit pos: Position): LinkedClass = {
@@ -2063,23 +2086,6 @@ private[javascript] object JSDesugaring {
         args: js.Tree*)(implicit pos: Position): js.Tree = {
       import TreeDSL._
       js.Apply(receiver DOT methodName, args.toList)
-    }
-
-    private def genLongModuleApply(methodName: String, args: js.Tree*)(
-        implicit pos: Position): js.Tree = {
-      import TreeDSL._
-      js.Apply(
-          genLoadModule(LongImpl.RuntimeLongModuleClass) DOT methodName,
-          args.toList)
-    }
-
-    private def genLoadModule(moduleClass: String)(
-        implicit pos: Position): js.Tree = {
-      import TreeDSL._
-      if (isStrongMode)
-        js.Apply(js.DotSelect(envField("c", moduleClass), js.Ident("__M")), Nil)
-      else
-        js.Apply(envField("m", moduleClass), Nil)
     }
 
     private implicit class RecordAwareEnv(env: Env) {
@@ -2242,6 +2248,24 @@ private[javascript] object JSDesugaring {
       "typedArray2FloatArray",
       "typedArray2DoubleArray"
   )
+
+  private[javascript] def genLongModuleApply(methodName: String,
+      args: js.Tree*)(implicit outputMode: OutputMode,
+      pos: Position): js.Tree = {
+    import TreeDSL._
+    js.Apply(
+        genLoadModule(LongImpl.RuntimeLongModuleClass) DOT methodName,
+        args.toList)
+  }
+
+  private def genLoadModule(moduleClass: String)(
+      implicit outputMode: OutputMode, pos: Position): js.Tree = {
+    import TreeDSL._
+    if (outputMode == OutputMode.ECMAScript6StrongMode)
+      js.Apply(js.DotSelect(envField("c", moduleClass), js.Ident("__M")), Nil)
+    else
+      js.Apply(envField("m", moduleClass), Nil)
+  }
 
   private[javascript] def encodeClassVar(className: String)(
       implicit outputMode: OutputMode, pos: Position): js.Tree =

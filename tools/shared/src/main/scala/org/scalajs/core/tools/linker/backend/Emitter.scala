@@ -21,6 +21,7 @@ import org.scalajs.core.tools.javascript
 import javascript.{Trees => js, OutputMode, ESLevel, LongImpl}
 
 import org.scalajs.core.ir.{ClassKind, Definitions, Position}
+import org.scalajs.core.ir.Definitions._
 import org.scalajs.core.ir.{Trees => ir}
 
 import org.scalajs.core.tools.linker._
@@ -31,6 +32,9 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
   import Emitter._
 
   private var classEmitter: javascript.ScalaJSClassEmitter = _
+  private val incClassEmitter: javascript.IncClassEmitter =
+    new javascript.IncClassEmitter(semantics, outputMode)
+
   private val classCaches = mutable.Map.empty[List[String], ClassCache]
 
   private[this] var statsClassesReused: Int = 0
@@ -71,7 +75,8 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
   }
 
   def emit(unit: LinkingUnit, builder: JSTreeBuilder, logger: Logger): Unit = {
-    classEmitter = new javascript.ScalaJSClassEmitter(outputMode, unit)
+    classEmitter = incClassEmitter.newScalaJSClassEmitter(unit)
+    incClassEmitter.beginRun(invalidateMethodCache(classEmitter))
     startRun()
     try {
       val orderedClasses = unit.classDefs.sortWith(compareClasses)
@@ -90,6 +95,7 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
       }
     } finally {
       endRun(logger)
+      incClassEmitter.endRun
       classEmitter = null
     }
   }
@@ -160,9 +166,16 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
     if (linkedClass.hasInstances && kind.isAnyScalaJSDefinedClass) {
       val ctor = classTreeCache.constructor.getOrElseUpdate(
           classEmitter.genConstructor(linkedClass))
-
       // Normal methods
-      val memberMethods = for (m <- linkedClass.memberMethods) yield {
+      val allMethods = linkedClass.memberMethods
+      val methodsDefs = {
+        if (incClassEmitter.usesJSConstructorOpt(className))
+          allMethods.filterNot(x => isConstructorName(x.info.encodedName))
+        else
+          allMethods
+      }
+
+      val memberMethods = for (m <- methodsDefs) yield {
         val methodCache = classCache.getMethodCache(m.info.encodedName)
 
         methodCache.getOrElseUpdate(m.version,
@@ -355,6 +368,25 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
 
   // Helpers
 
+  private def invalidateMethodCache(clssEmitter: javascript.ScalaJSClassEmitter)(
+      enclosingClassName: String, methodName: String,
+      isStatic: Boolean): Unit = {
+    val linkedClass = clssEmitter.linkedClassByName(enclosingClassName)
+    val classCache = getClassCache(linkedClass.ancestors)
+    val classTreeCache = classCache.getCache(linkedClass.version)
+    val ctorExportDef = javascript.ScalaJSClassEmitter.ConstructorExportDefName
+    val exportedMember = javascript.ScalaJSClassEmitter.ExportedMemberName
+    (methodName, isStatic) match {
+        case (`ctorExportDef` | `exportedMember`, _) =>
+          classTreeCache.exportedMembers.invalidate
+        case (_, true) =>
+          classCache.getStaticCache(methodName).invalidate
+        case _ =>
+          classCache.getMethodCache(methodName).invalidate
+
+    }
+  }
+
   private def getClassTreeCache(linkedClass: LinkedClass): DesugaredClassCache =
     getClassCache(linkedClass.ancestors).getCache(linkedClass.version)
 
@@ -439,6 +471,8 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
       _tree
     }
 
+    def invalidate: Unit = _tree = null
+
     def cleanAfterRun(): Boolean = _cacheUsed
   }
 }
@@ -461,6 +495,8 @@ object Emitter {
         value = v
       value
     }
+
+    def invalidate: Unit = value = null
   }
 
   def symbolRequirements(semantics: Semantics, esLevel: ESLevel): SymbolRequirement = {
