@@ -71,8 +71,9 @@ final class Analyzer(semantics: Semantics, outputMode: OutputMode,
     reachCoreSymbols()
 
     // Reach all user stuff
-    for (classInfo <- _classInfos.values)
+    for (classInfo <- _classInfos.values) {
       classInfo.reachExports()
+    }
 
     // Reach additional data, based on reflection methods used
     reachDataThroughReflection()

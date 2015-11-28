@@ -19,6 +19,7 @@ import ir.Position._
 import ir.Transformers._
 import ir.Trees._
 import ir.Types._
+import Definitions._
 
 import org.scalajs.core.tools.sem._
 import CheckedBehavior._
@@ -132,6 +133,15 @@ private[javascript] object JSDesugaring {
       implicit pos: Position): js.Function = {
     new JSDesugar(classEmitter, enclosingClassName,
         thisIdent).desugarToFunction(params, body, isStat)
+  }
+
+  private[javascript] def desugarToConstructor(
+      classEmitter: ScalaJSClassEmitter, enclosingClassName: String, 
+      params: List[ParamDef], body: Tree, superCall: js.Tree)(
+      implicit pos: Position): js.Function = {
+    val js.Function(args, bodyDesug) = new JSDesugar(classEmitter,
+        enclosingClassName, None).desugarToFunction(params, body, isStat = true)
+    js.Function(args, js.Block(List(superCall, bodyDesug)))
   }
 
   /** Desugars a statement or an expression. */
@@ -1552,8 +1562,15 @@ private[javascript] object JSDesugaring {
         // Scala expressions
 
         case New(cls, ctor, args) =>
-          js.Apply(js.New(encodeClassVar(cls.className), Nil) DOT ctor,
-              args map transformExpr)
+          val lnkdClss = classEmitter.linkedClassByName(cls.className)
+          val onlyHasOneCtor = lnkdClss.memberMethods.
+              filter(x => isConstructorName(x.tree.name.name)).size == 1
+          if(classEmitter.effectivelyFinal(lnkdClss) && onlyHasOneCtor) {
+            js.New(encodeClassVar(cls.className), args map transformExpr)
+          } else {
+            js.Apply(js.New(encodeClassVar(cls.className), Nil) DOT ctor,
+                args map transformExpr)
+          }
 
         case LoadModule(cls) =>
           genLoadModule(cls.className)

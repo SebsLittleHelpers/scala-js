@@ -180,11 +180,11 @@ ScalaJS.isScalaJSObject = function(obj) {
 //!if asInstanceOfs != Unchecked
 ScalaJS.throwClassCastException = function(instance, classFullName) {
 //!if asInstanceOfs == Compliant
-  throw new ScalaJS.c.jl_ClassCastException().init___T(
+  throw new ScalaJS.c.jl_ClassCastException(
     instance + " is not an instance of " + classFullName);
 //!else
   throw new ScalaJS.c.sjsr_UndefinedBehaviorError().init___jl_Throwable(
-    new ScalaJS.c.jl_ClassCastException().init___T(
+    new ScalaJS.c.jl_ClassCastException(
       instance + " is not an instance of " + classFullName));
 //!endif
 };
@@ -230,7 +230,7 @@ ScalaJS.checkNonNull = function(obj) {
 };
 
 ScalaJS.throwNullPointerException = function() {
-  throw new ScalaJS.c.jl_NullPointerException().init___();
+  throw new ScalaJS.c.jl_NullPointerException();
 };
 
 ScalaJS.objectToString = function(instance) {
@@ -280,7 +280,7 @@ ScalaJS.objectClone = function(instance) {
   if (ScalaJS.isScalaJSObject(instance) || (instance === null))
     return instance.clone__O();
   else
-    throw new ScalaJS.c.jl_CloneNotSupportedException().init___();
+    throw new ScalaJS.c.jl_CloneNotSupportedException();
 };
 
 ScalaJS.objectNotify = function(instance) {
@@ -897,7 +897,7 @@ ScalaJS.TypeData.prototype.getClassOf = function() {
 getClassOf() {
 //!endif
   if (!this._classOf)
-    this._classOf = new ScalaJS.c.jl_Class().init___jl_ScalaJSClassData(this);
+    this._classOf = new ScalaJS.c.jl_Class(this);
   return this._classOf;
 };
 

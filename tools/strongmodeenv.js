@@ -393,11 +393,11 @@ class $ {
 //!if asInstanceOfs != Unchecked
   static throwClassCastException(instance, classFullName) {
 //!if asInstanceOfs == Compliant
-    throw new $c_jl_ClassCastException().init___T(
+    throw new $c_jl_ClassCastException(
       instance + " is not an instance of " + classFullName);
 //!else
     throw new $c_sjsr_UndefinedBehaviorError().init___jl_Throwable(
-      new $c_jl_ClassCastException().init___T(
+      new $c_jl_ClassCastException(
         instance + " is not an instance of " + classFullName));
 //!endif
   };
@@ -438,7 +438,7 @@ class $ {
   };
 
   static throwNullPointerException() {
-    throw new $c_jl_NullPointerException().init___();
+    throw new $c_jl_NullPointerException();
   };
 
   static objectToString(instance) {
@@ -488,7 +488,7 @@ class $ {
     if ($isScalaJSObject(instance) || (instance === null))
       return instance.clone__O();
     else
-      throw new $c_jl_CloneNotSupportedException().init___();
+      throw new $c_jl_CloneNotSupportedException();
   };
 
   static objectNotify(instance) {
@@ -859,7 +859,7 @@ class $TypeData {
 
   getClassOf() {
     if (!this._classOf)
-      this._classOf = new $c_jl_Class().init___jl_ScalaJSClassData(this);
+      this._classOf = new $c_jl_Class(this);
     return this._classOf;
   };
 

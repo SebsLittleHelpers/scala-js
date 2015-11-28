@@ -22,6 +22,7 @@ import org.scalajs.core.tools.javascript
 import javascript.{Trees => js, OutputMode}
 
 import org.scalajs.core.ir.{ClassKind, Definitions, Position}
+import org.scalajs.core.ir.Definitions._
 import org.scalajs.core.ir.{Trees => ir}
 
 /** Emits a desugared JS tree to a builder */
@@ -162,7 +163,16 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
           classEmitter.genConstructor(linkedClass))
 
       // Normal methods
-      val memberMethods = for (m <- linkedClass.memberMethods) yield {
+      val allMethods = linkedClass.memberMethods
+      val (ctorDefs, otherDefs) =
+        allMethods.partition(x => isConstructorName(x.tree.name.name))
+      val methodsDefs = 
+        if (classEmitter.effectivelyFinal(linkedClass) && ctorDefs.size <= 1)
+          otherDefs
+        else
+          allMethods
+
+      val memberMethods = for (m <- methodsDefs) yield {
         val methodCache = classCache.getMethodCache(m.info.encodedName)
 
         methodCache.getOrElseUpdate(m.version,
