@@ -9,8 +9,6 @@
 
 package org.scalajs.core.tools.javascript
 
-import scala.collection.mutable
-
 import org.scalajs.core.ir._
 import Position._
 import Transformers._
@@ -42,45 +40,22 @@ final class ScalaJSClassEmitter private (
     this(semantics, outputMode, linkingUnit, linkingUnit.globalInfo)
   }
 
-  @deprecated(
-      "This constructor creates an emitter that cannot handle JS classes. " +
-      "Use the constructor with a LinkingUnit instead.", "0.6.5")
-  def this(semantics: Semantics, outputMode: OutputMode,
-      globalInfo: LinkingUnit.GlobalInfo) =
-    this(semantics, OutputMode.ECMAScript51Global, null, globalInfo)
-
-  @deprecated(
-      "This constructor creates an emitter that cannot handle JS classes. " +
-      "Use the constructor with a LinkingUnit instead.", "0.6.2")
-  def this(semantics: Semantics, globalInfo: LinkingUnit.GlobalInfo) =
-    this(semantics, OutputMode.ECMAScript51Global, globalInfo)
-
-  @deprecated(
-      "This constructor creates an emitter that cannot handle JS classes. " +
-      "Use the constructor with a LinkingUnit instead.", "0.6.1")
-  def this(semantics: Semantics) =
-    this(semantics, LinkingUnit.GlobalInfo.SafeApproximation)
-
   private[javascript] lazy val linkedClassByName: Map[String, LinkedClass] = {
-    if (linkingUnit == null) {
-      throw new IllegalArgumentException(
-          "A class emitter created without a LinkingUnit cannot emit JS classes")
-    }
     linkingUnit.classDefs.map(c => c.encodedName -> c).toMap
   }
 
-  private[javascript] lazy val hasSubclasses: Set[String] = {
-    if (linkingUnit == null) {
-      throw new IllegalArgumentException(
-          "A class emitter created without a LinkingUnit cannot emit JS classes")
-    }
-    linkingUnit.classDefs.map(c => c.superClass).
-      collect{case Some(x) => x.name}.toSet
-  }
+  lazy val usesJSConstructorOpt: Set[String] = {
+    val blackList = Set("jl_ClassCastException",
+      "sjsr_UndefinedBehaviorError", "jl_NullPointerException",
+      "js_CloneNotSupportedException")
+    val defsNoInst = linkingUnit.classDefs.filter(_.hasInstances)
+    val cantCtorOpt = (defsNoInst.flatMap(_.superClass) ++
+        defsNoInst.filterNot(_.classExports.isEmpty).
+        map(_.name)).map(_.name).toSet ++ blackList
 
-  def effectivelyFinal(clss: LinkedClass): Boolean = {
-    !hasSubclasses(clss.name.name) &&
-    clss.classExports.isEmpty
+    (linkingUnit.classDefs.filter(_.memberMethods.count(
+      x => isConstructorName(x.info.encodedName)) == 1).map(
+      _.encodedName).toSet -- cantCtorOpt)
   }
 
   private implicit def implicitOutputMode: OutputMode = outputMode
@@ -138,10 +113,8 @@ final class ScalaJSClassEmitter private (
     val className = tree.name.name
     val typeFunctionDef = genConstructor(tree)
     val allMethods = tree.memberMethods
-    val (ctorDefs, otherDefs) =
-      allMethods.partition(x => isConstructorName(x.tree.name.name))
-    val methods = if (effectivelyFinal(tree) && ctorDefs.size <= 1)
-      otherDefs
+    val methods = if (usesJSConstructorOpt(className))
+      allMethods.filterNot(x => isConstructorName(x.info.encodedName))
     else
       allMethods
 
@@ -231,7 +204,7 @@ final class ScalaJSClassEmitter private (
 
     def makeInheritableCtorDef(ctorToMimic: js.Tree) = {
       js.Block(
-        js.DocComment(s"@constructor"),
+        js.DocComment("@constructor"),
         envFieldDef("h", className, js.Function(Nil, js.Skip())),
         js.Assign(envField("h", className).prototype, ctorToMimic.prototype)
       )
@@ -246,24 +219,20 @@ final class ScalaJSClassEmitter private (
             List(js.This()))
       }
       val fieldDefs = genFieldDefs(tree)
-      if (!effectivelyFinal(tree)) js.Function(Nil, js.Block(superCtorCall :: fieldDefs))
+      if (!usesJSConstructorOpt(className))
+        js.Function(Nil, js.Block(superCtorCall :: fieldDefs))
       else {
-        val ctorDefs =
-          tree.memberMethods.map(_.tree).filter(x => isConstructorName(x.name.name))
         /* only handling the case for one constructor so far*/
-        ctorDefs match {
-          case defn::Nil =>
-            desugarToConstructor(this, className, defn.args, defn.body, superCtorCall)
-
-          case _ => js.Function(Nil, js.Block(superCtorCall :: fieldDefs))
-        }
+        val (defn :: _) =
+          tree.memberMethods.map(_.tree).filter(x => isConstructorName(x.name.name))
+        desugarToConstructor(this, className, defn.args, defn.body, superCtorCall)
       }
     } else {
       genConstructorFunForJSClass(tree)
     }
 
     val typeVar = encodeClassVar(className)
-    val docComment = js.DocComment(s"@constructor")
+    val docComment = js.DocComment("@constructor")
     val ctorDef = envFieldDef("c", className, ctorFun)
 
     val chainProto = tree.superClass.fold[js.Tree] {
@@ -298,27 +267,25 @@ final class ScalaJSClassEmitter private (
       val js.Function(params, body) = genConstructorFunForJSClass(tree)
       js.MethodDef(static = false, js.Ident("constructor"), params, body)
     } else {
+      val className = tree.name.name
       val fieldDefs = genFieldDefs(tree)
-      val isFinal = effectivelyFinal(tree)
-      val ctorDefs =
-          tree.memberMethods.map(_.tree).filter(x => isConstructorName(x.name.name))
-      val (otherStatements, args) = ctorDefs match {
-          case defn::Nil if (effectivelyFinal(tree)) =>
-            /* this will introduce an EmptyTree in our body so we have to take
-             * the tail of the body only!
-             */
-            val js.Function(args, bodyBlk) = desugarToConstructor(this,
-                tree.name.name, defn.args, defn.body, js.EmptyTree)
-            val body = bodyBlk match {
-              case js.Block(bdy) => bdy.tail
-              case _ => Nil
-            }
-            (body, args)
 
-          case _ => (fieldDefs, Nil)
+      val (otherStatements, args) = if (usesJSConstructorOpt(className)) {
+        val (head :: _) =
+          tree.memberMethods.map(_.tree).
+          filter(x => isConstructorName(x.name.name))
+        val js.Function(args, bodyBlock) = desugarToConstructor(this,
+            tree.name.name, head.args, head.body, js.Skip())
+        val body = bodyBlock match {
+          case js.Block(bdy) => bdy
+          case _             => Nil
+        }
+        (body, args)
+      } else {
+        (fieldDefs, Nil)
       }
 
-      if (fieldDefs.isEmpty && outputMode == OutputMode.ECMAScript6) {
+      if (otherStatements.isEmpty && outputMode == OutputMode.ECMAScript6) {
         js.Skip()
       } else {
         val superCtorCall = tree.superClass.fold[js.Tree] {
@@ -828,7 +795,7 @@ final class ScalaJSClassEmitter private (
       val assignModule = {
         val jsNew = js.New(encodeClassVar(className), Nil)
         val instantiateModule =
-          if (tree.kind == ClassKind.JSModuleClass || effectivelyFinal(tree)) {
+          if (tree.kind == ClassKind.JSModuleClass || usesJSConstructorOpt(className)) {
             jsNew
           } else {
             js.Apply(jsNew DOT js.Ident("init___"), Nil)

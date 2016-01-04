@@ -161,14 +161,11 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
     if (linkedClass.hasInstances && kind.isAnyScalaJSDefinedClass) {
       val ctor = classTreeCache.constructor.getOrElseUpdate(
           classEmitter.genConstructor(linkedClass))
-
       // Normal methods
       val allMethods = linkedClass.memberMethods
-      val (ctorDefs, otherDefs) =
-        allMethods.partition(x => isConstructorName(x.tree.name.name))
       val methodsDefs = 
-        if (classEmitter.effectivelyFinal(linkedClass) && ctorDefs.size <= 1)
-          otherDefs
+        if (classEmitter.usesJSConstructorOpt(className))
+          allMethods.filterNot(x => isConstructorName(x.info.encodedName))
         else
           allMethods
 

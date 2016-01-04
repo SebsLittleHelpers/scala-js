@@ -139,9 +139,9 @@ private[javascript] object JSDesugaring {
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String, 
       params: List[ParamDef], body: Tree, superCall: js.Tree)(
       implicit pos: Position): js.Function = {
-    val js.Function(args, bodyDesug) = new JSDesugar(classEmitter,
+    val js.Function(args, newBody) = new JSDesugar(classEmitter,
         enclosingClassName, None).desugarToFunction(params, body, isStat = true)
-    js.Function(args, js.Block(List(superCall, bodyDesug)))
+    js.Function(args, js.Block(List(superCall, newBody)))
   }
 
   /** Desugars a statement or an expression. */
@@ -1562,10 +1562,7 @@ private[javascript] object JSDesugaring {
         // Scala expressions
 
         case New(cls, ctor, args) =>
-          val lnkdClss = classEmitter.linkedClassByName(cls.className)
-          val onlyHasOneCtor = lnkdClss.memberMethods.
-              filter(x => isConstructorName(x.tree.name.name)).size == 1
-          if(classEmitter.effectivelyFinal(lnkdClss) && onlyHasOneCtor) {
+          if (classEmitter.usesJSConstructorOpt(cls.className)) {
             js.New(encodeClassVar(cls.className), args map transformExpr)
           } else {
             js.Apply(js.New(encodeClassVar(cls.className), Nil) DOT ctor,
