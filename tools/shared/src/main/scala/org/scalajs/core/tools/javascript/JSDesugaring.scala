@@ -118,10 +118,10 @@ private[javascript] object JSDesugaring {
    */
   private[javascript] def desugarToFunction(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
-      params: List[ParamDef], body: Tree, isStat: Boolean)(
-      implicit pos: Position): js.Function = {
+      params: List[ParamDef], body: Tree, isStat: Boolean,
+      methodDef: MethodDef)(implicit pos: Position): js.Function = {
     desugarToFunction(classEmitter, enclosingClassName,
-        None, params, body, isStat)
+        None, params, body, isStat, methodDef)
   }
 
   /** Desugars parameters and body to a JS function.
@@ -129,26 +129,29 @@ private[javascript] object JSDesugaring {
   private[javascript] def desugarToFunction(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
       thisIdent: Option[js.Ident], params: List[ParamDef],
-      body: Tree, isStat: Boolean)(
+      body: Tree, isStat: Boolean, methodDef: MethodDef)(
       implicit pos: Position): js.Function = {
     new JSDesugar(classEmitter, enclosingClassName,
-        thisIdent).desugarToFunction(params, body, isStat)
+        methodDef, thisIdent).desugarToFunction(params, body, isStat)
   }
 
   private[javascript] def desugarToConstructor(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String, 
-      params: List[ParamDef], body: Tree, superCall: js.Tree)(
-      implicit pos: Position): js.Function = {
+      params: List[ParamDef], body: Tree, superCall: js.Tree,
+      methodDef: MethodDef)(implicit pos: Position): js.Function = {
     val js.Function(args, newBody) = new JSDesugar(classEmitter,
-        enclosingClassName, None).desugarToFunction(params, body, isStat = true)
+      enclosingClassName, methodDef, None).desugarToFunction(params,
+      body, isStat = true)
     js.Function(args, js.Block(List(superCall, newBody)))
   }
 
   /** Desugars a statement or an expression. */
   private[javascript] def desugarTree(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
-      tree: Tree, isStat: Boolean): js.Tree = {
-    val desugar = new JSDesugar(classEmitter, enclosingClassName, None)
+      tree: Tree, isStat: Boolean, methodDef: MethodDef): js.Tree = {
+    val desugar =
+      new JSDesugar(classEmitter, enclosingClassName, methodDef, None)
+
     if (isStat)
       desugar.transformStat(tree)(Env.empty)
     else
@@ -161,9 +164,55 @@ private[javascript] object JSDesugaring {
   private[javascript] def transformParamDef(paramDef: ParamDef): js.ParamDef =
     js.ParamDef(paramDef.name, paramDef.rest)(paramDef.pos)
 
+  private[javascript] def transformLiteral(lit: Literal)(implicit pos:Position,
+      outputMode: OutputMode) = lit match {
+    case Undefined()            => js.Undefined()
+    case Null()                 => js.Null()
+    case BooleanLiteral(value)  => js.BooleanLiteral(value)
+    case IntLiteral(value)      => js.IntLiteral(value)
+    case FloatLiteral(value)    => js.DoubleLiteral(value.toDouble)
+    case DoubleLiteral(value)   => js.DoubleLiteral(value)
+    case StringLiteral(value)   => js.StringLiteral(value)
+
+    case LongLiteral(0L) =>
+      genLongModuleApply(LongImpl.Zero)
+
+    case ClassOf(cls) =>
+      js.Apply(js.DotSelect(genClassDataOf(cls), Ident("getClassOf")), Nil)
+  }
+
+  private def genClassDataOf(cls: ReferenceType)
+      (implicit pos: Position, outputMode: OutputMode): js.Tree = {
+    cls match {
+      case ClassType(className) =>
+        envField("d", className)
+      case ArrayType(base, dims) =>
+        (1 to dims).foldLeft(envField("d", base)) { (prev, _) =>
+          js.Apply(js.DotSelect(prev, js.Ident("getArrayOf")), Nil)
+        }
+    }
+  }
+
+  private def genLongModuleApply(methodName: String, args: js.Tree*)(
+      implicit pos: Position, outputMode: OutputMode): js.Tree = {
+    import TreeDSL._
+    js.Apply(
+        genLoadModule(LongImpl.RuntimeLongModuleClass) DOT methodName,
+        args.toList)
+  }
+
+  private def genLoadModule(moduleClass: String)(
+      implicit pos: Position, outputMode: OutputMode): js.Tree = {
+    import TreeDSL._
+    if (outputMode == OutputMode.ECMAScript6StrongMode)
+      js.Apply(js.DotSelect(envField("c", moduleClass), js.Ident("__M")), Nil)
+    else
+      js.Apply(envField("m", moduleClass), Nil)
+  }
+
   private class JSDesugar(
       classEmitter: ScalaJSClassEmitter, enclosingClassName: String,
-      thisIdent: Option[js.Ident]) {
+      methodDef: MethodDef, thisIdent: Option[js.Ident]) {
 
     private val semantics = classEmitter.semantics
     private implicit val outputMode: OutputMode = classEmitter.outputMode
@@ -171,7 +220,7 @@ private[javascript] object JSDesugaring {
     private val isStrongMode = outputMode == OutputMode.ECMAScript6StrongMode
 
     // TODO Get rid of this when we break backward binary compatibility
-    private lazy val hasNewRuntimeLong = {
+    private implicit lazy val hasNewRuntimeLong = {
       val rtLongClass = classEmitter.linkedClassByName(LongImpl.RuntimeLongClass)
       rtLongClass.memberMethods.exists { linkedMethod =>
         linkedMethod.tree.name.name == LongImpl.initFromParts
@@ -1915,7 +1964,19 @@ private[javascript] object JSDesugaring {
         case JSLinkingInfo() =>
           envField("linkingInfo")
 
-        // Literals
+        // Litterals
+        case LongLiteral(value) if value != 0L =>
+          if (hasNewRuntimeLong) {
+            val (lo, hi) = LongImpl.extractParts(value)
+            genNewLong(LongImpl.initFromParts,
+                js.IntLiteral(lo), js.IntLiteral(hi))
+          } else {
+            val (l, m, h) = LongImpl.extractPartsOld(value)
+            genNewLong(LongImpl.initFromPartsOld,
+                js.IntLiteral(l), js.IntLiteral(m), js.IntLiteral(h))
+          }
+        case a: Literal =>
+          transformLiteral(a)
 
         case Undefined()            => js.Undefined()
         case Null()                 => js.Null()
@@ -1927,7 +1988,7 @@ private[javascript] object JSDesugaring {
 
         case LongLiteral(0L) =>
           genLongModuleApply(LongImpl.Zero)
-        case LongLiteral(value) =>
+        case LongLiteral(value) if value != 0L =>
           if (hasNewRuntimeLong) {
             val (lo, hi) = LongImpl.extractParts(value)
             genNewLong(LongImpl.initFromParts,
@@ -2023,17 +2084,6 @@ private[javascript] object JSDesugaring {
         "isInfinite__Z" -> "isInfinite"
     )
 
-    def genClassDataOf(cls: ReferenceType)(implicit pos: Position): js.Tree = {
-      cls match {
-        case ClassType(className) =>
-          envField("d", className)
-        case ArrayType(base, dims) =>
-          (1 to dims).foldLeft(envField("d", base)) { (prev, _) =>
-            js.Apply(js.DotSelect(prev, js.Ident("getArrayOf")), Nil)
-          }
-      }
-    }
-
     private def getSuperClassOfJSClass(linkedClass: LinkedClass)(
         implicit pos: Position): LinkedClass = {
       require(linkedClass.kind.isJSClass)
@@ -2057,23 +2107,6 @@ private[javascript] object JSDesugaring {
         args: js.Tree*)(implicit pos: Position): js.Tree = {
       import TreeDSL._
       js.Apply(receiver DOT methodName, args.toList)
-    }
-
-    private def genLongModuleApply(methodName: String, args: js.Tree*)(
-        implicit pos: Position): js.Tree = {
-      import TreeDSL._
-      js.Apply(
-          genLoadModule(LongImpl.RuntimeLongModuleClass) DOT methodName,
-          args.toList)
-    }
-
-    private def genLoadModule(moduleClass: String)(
-        implicit pos: Position): js.Tree = {
-      import TreeDSL._
-      if (isStrongMode)
-        js.Apply(js.DotSelect(envField("c", moduleClass), js.Ident("__M")), Nil)
-      else
-        js.Apply(envField("m", moduleClass), Nil)
     }
 
     private implicit class RecordAwareEnv(env: Env) {

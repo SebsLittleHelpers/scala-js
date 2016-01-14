@@ -71,10 +71,14 @@ class EnumerationTest {
   }
 
   @Test def should_respond_to_toString(): Unit = {
+    println(FooBarEnum)
+    println(FooBarEnum.getClass)
+    println(FooBarEnum.getClass.getName)
     assertEquals("FooBarEnum", FooBarEnum.toString)
   }
 
   @Test def should_respond_to_values(): Unit = {
+    println(FooBarEnum.values)
     assertEquals("FooBarEnum.ValueSet(A, B, C, D, E, F)",
         FooBarEnum.values.toString)
   }
@@ -90,6 +94,7 @@ class EnumerationTest {
 
   /** Object is here due to issues with Enumeration.toString inside closures */
   object FooBarEnum extends Enumeration {
+    override def toString = "FooBarEnum"
     val A, B, C, D, E, F = Value
   }
 }

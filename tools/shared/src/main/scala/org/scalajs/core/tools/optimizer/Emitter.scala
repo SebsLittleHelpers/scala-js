@@ -34,6 +34,9 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
     this(semantics, OutputMode.ECMAScript51Global)
 
   private var classEmitter: javascript.ScalaJSClassEmitter = _
+  private val incClassEmitter: javascript.IncClassEmitter =
+    new javascript.IncClassEmitter(semantics, outputMode)
+
   private val classCaches = mutable.Map.empty[List[String], ClassCache]
 
   private[this] var statsClassesReused: Int = 0
@@ -71,8 +74,7 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
   }
 
   def emit(unit: LinkingUnit, builder: JSTreeBuilder, logger: Logger): Unit = {
-    classEmitter = new javascript.ScalaJSClassEmitter(
-        semantics, outputMode, unit)
+    classEmitter = incClassEmitter.newScalaJSClassEmitter(unit)
     startRun()
     try {
       val orderedClasses = unit.classDefs.sortWith(compareClasses)
@@ -163,11 +165,12 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
           classEmitter.genConstructor(linkedClass))
       // Normal methods
       val allMethods = linkedClass.memberMethods
-      val methodsDefs = 
-        if (classEmitter.usesJSConstructorOpt(className))
+      val methodsDefs = {
+        if (incClassEmitter.usesJSConstructorOpt(className))
           allMethods.filterNot(x => isConstructorName(x.info.encodedName))
         else
           allMethods
+      }
 
       val memberMethods = for (m <- methodsDefs) yield {
         val methodCache = classCache.getMethodCache(m.info.encodedName)
