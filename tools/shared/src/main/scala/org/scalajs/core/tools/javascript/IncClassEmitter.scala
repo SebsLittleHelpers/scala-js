@@ -26,16 +26,17 @@ final class IncClassEmitter (semantics: Semantics, outputMode: OutputMode) {
   def classEmitter = _classEmitter
   def classEmitter_=(v: ScalaJSClassEmitter): Unit = _classEmitter = v
 
-  def beginRun(unit: LinkingUnit,
-      invalidateFunc: (String, String, Boolean) => Unit): Unit = {
-    newScalaJSClassEmitter(unit)
-    val classesWhoChanged = lastClassesCtorOpt.diff(currentClassesCtorOpt)
-    val methodsToInvalidate = classesWhoChanged.flatMap{
-      className => askedForCtorOpt.getOrElse(className, Set.empty)
-    }
-    methodsToInvalidate.foreach{
-      case (className, methodName, isStatic) =>
-        invalidateFunc(className, methodName, isStatic)
+  def beginRun(invalidateFunc: (String, String, Boolean) => Unit): Unit = {
+    val classesWhoChanged = (lastClassesCtorOpt -- currentClassesCtorOpt) ++
+      (currentClassesCtorOpt -- lastClassesCtorOpt)
+    val methodsToInvalidate = askedForCtorOpt.retain { (className, callers) =>
+      if (classesWhoChanged(className)) {
+        // invalidate
+        callers.foreach(invalidateFunc.tupled)
+        false
+      } else {
+        true
+      }
     }
   }
 
@@ -46,7 +47,6 @@ final class IncClassEmitter (semantics: Semantics, outputMode: OutputMode) {
   }
 
   def endRun(): Unit = {
-    askedForCtorOpt.clear
     lastClassesCtorOpt = currentClassesCtorOpt
   }
 

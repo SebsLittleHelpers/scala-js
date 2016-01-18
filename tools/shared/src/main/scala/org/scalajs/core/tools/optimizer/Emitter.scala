@@ -75,6 +75,7 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
 
   def emit(unit: LinkingUnit, builder: JSTreeBuilder, logger: Logger): Unit = {
     classEmitter = incClassEmitter.newScalaJSClassEmitter(unit)
+    incClassEmitter.beginRun(invalidateMethodCache(classEmitter))
     startRun()
     try {
       val orderedClasses = unit.classDefs.sortWith(compareClasses)
@@ -93,6 +94,7 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
       }
     } finally {
       endRun(logger)
+      incClassEmitter.endRun
       classEmitter = null
     }
   }
@@ -344,6 +346,25 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
 
   // Helpers
 
+  private def invalidateMethodCache(clssEmitter: javascript.ScalaJSClassEmitter)(
+      enclosingClassName: String, methodName: String,
+      isStatic: Boolean): Unit = {
+    val linkedClass = clssEmitter.linkedClassByName(enclosingClassName)
+    val classCache = getClassCache(linkedClass.ancestors)
+    val classTreeCache = classCache.getCache(linkedClass.version)
+    val ctorExportDef = javascript.ScalaJSClassEmitter.ConstructorExportDefName
+    val exportedMember = javascript.ScalaJSClassEmitter.ExportedMemberName
+    (methodName, isStatic) match {
+        case (`ctorExportDef` | `exportedMember`, _) =>
+          classTreeCache.exportedMembers.invalidate
+        case (_, true) =>
+          classCache.getStaticCache(methodName).invalidate
+        case _ =>
+          classCache.getMethodCache(methodName).invalidate
+
+    }
+  }
+
   private def getClassTreeCache(linkedClass: LinkedClass): DesugaredClassCache =
     getClassCache(linkedClass.ancestors).getCache(linkedClass.version)
 
@@ -428,6 +449,8 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
       _tree
     }
 
+    def invalidate: Unit = _tree = null
+
     def cleanAfterRun(): Boolean = _cacheUsed
   }
 }
@@ -450,5 +473,7 @@ object Emitter {
         value = v
       value
     }
+
+    def invalidate: Unit = value = null
   }
 }
