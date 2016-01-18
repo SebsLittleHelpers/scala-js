@@ -34,7 +34,7 @@ final class ScalaJSClassEmitter(
   import ScalaJSClassEmitter._
   import JSDesugaring._
 
-  private[tools] lazy val linkedClassByName: Map[String, LinkedClass] =
+  private[javascript] lazy val linkedClassByName: Map[String, LinkedClass] =
     linkingUnit.classDefs.map(c => c.encodedName -> c).toMap
 
   private[javascript] def isInterface(className: String): Boolean = {
@@ -61,6 +61,7 @@ final class ScalaJSClassEmitter(
      * live with the theoretical flaw.
      */
     linkedClassByName(className).kind == ClassKind.Interface
+  }
 
   lazy val candidateForJSConstructorOpt: Set[String] = {
     /* Those classes appears in hard coded js files.
@@ -401,9 +402,14 @@ final class ScalaJSClassEmitter(
   def genMethod(className: String, method: MethodDef): js.Tree = {
     implicit val pos = method.pos
 
+    val methodName = method.name match {
+      case StringLiteral(_) => ScalaJSClassEmitter.ExportedMemberName
+      case Ident(name, _)   => name
+    }
+
     val methodFun0 = desugarToFunction(this, className,
         method.args, method.body, method.resultType == NoType,
-        method.name.name, method.static)
+        methodName, method.static)
 
     val methodFun = if (Definitions.isConstructorName(method.name.name)) {
       // init methods have to return `this` so that we can chain them to `new`
@@ -448,7 +454,8 @@ final class ScalaJSClassEmitter(
     val thisIdent = js.Ident("$thiz", Some("this"))
 
     val methodFun0 = desugarToFunction(this, className, Some(thisIdent),
-        method.args, method.body, method.resultType == NoType)
+        method.args, method.body, method.resultType == NoType,
+        method.name.name, method.static)
 
     val methodFun = js.Function(
         js.ParamDef(thisIdent, rest = false) :: methodFun0.args,

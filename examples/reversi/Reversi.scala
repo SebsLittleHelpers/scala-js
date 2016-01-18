@@ -30,7 +30,6 @@ class Reversi(jQuery: JQueryStatic, playground: JQuery) {
 
   // The Model -----------------------------------------------------------------
 
-  val logger = new Logger("I love incrementality")
   val BoardSize = 8 // size of a Reversi board
 
   def inBounds(index: Int): Boolean = index >= 0 && index < BoardSize
@@ -94,7 +93,6 @@ class Reversi(jQuery: JQueryStatic, playground: JQuery) {
     val context = domCanvas.getContext("2d").asInstanceOf[CanvasRenderingContext2D]
 
     playground.append(jQuery("<div>").append(boardCanvas))
-    logger.enscribe()
 
     /** Draw the specified square on the board canvas */
     def drawSquare(square: Square) {
@@ -266,25 +264,3 @@ class Reversi(jQuery: JQueryStatic, playground: JQuery) {
     startTurn()
   }
 }
-
-class A {
-  var hello = ""
-}
-
-// version 1 - opt that class!
-// class Logger(message: String) extends A {
-//   def enscribe() = println(message)
-// }
-
-// version 2 - incrementaly problematic
-class Logger(message: String) extends A {
-  def enscribe() = {
-    val printer = new B(message)
-    printer.enscribeB()
-  }
-}
-
-class B(message: String) extends Logger(message) {
-  def enscribeB() = println("I'm B! " + message)
-}
-

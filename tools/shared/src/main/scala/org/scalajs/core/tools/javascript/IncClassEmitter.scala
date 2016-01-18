@@ -12,7 +12,7 @@ import scala.collection.mutable
 
 import org.scalajs.core.tools.sem._
 
-import org.scalajs.core.tools.optimizer.LinkingUnit
+import org.scalajs.core.tools.linker.LinkingUnit
 
 /** Tracks incrementality breaking changes made during class emitting.
  */
@@ -26,7 +26,9 @@ final class IncClassEmitter (semantics: Semantics, outputMode: OutputMode) {
   def classEmitter = _classEmitter
   def classEmitter_=(v: ScalaJSClassEmitter): Unit = _classEmitter = v
 
-  def beginRun(invalidateFunc: (String, String, Boolean) => Unit): Unit = {
+  def beginRun(unit: LinkingUnit,
+      invalidateFunc: (String, String, Boolean) => Unit): ScalaJSClassEmitter = {
+    newScalaJSClassEmitter(unit)
     val classesWhoChanged = (lastClassesCtorOpt -- currentClassesCtorOpt) ++
       (currentClassesCtorOpt -- lastClassesCtorOpt)
     val methodsToInvalidate = askedForCtorOpt.retain { (className, callers) =>
@@ -38,10 +40,11 @@ final class IncClassEmitter (semantics: Semantics, outputMode: OutputMode) {
         true
       }
     }
+    classEmitter
   }
 
   def newScalaJSClassEmitter(unit: LinkingUnit): ScalaJSClassEmitter = {
-    classEmitter = new ScalaJSClassEmitter(semantics, outputMode, unit, this)
+    classEmitter = new ScalaJSClassEmitter(outputMode, unit, this)
     currentClassesCtorOpt = classEmitter.candidateForJSConstructorOpt
     classEmitter
   }
@@ -62,5 +65,4 @@ final class IncClassEmitter (semantics: Semantics, outputMode: OutputMode) {
 
     usesJSConstructorOpt(className)
   }
-
 }

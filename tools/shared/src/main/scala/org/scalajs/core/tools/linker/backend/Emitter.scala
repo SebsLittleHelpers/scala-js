@@ -34,6 +34,7 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
   private var classEmitter: javascript.ScalaJSClassEmitter = _
   private val incClassEmitter: javascript.IncClassEmitter =
     new javascript.IncClassEmitter(semantics, outputMode)
+  private var linkedClassByName: Map[String, LinkedClass] = _
 
   private val classCaches = mutable.Map.empty[List[String], ClassCache]
 
@@ -75,8 +76,8 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
   }
 
   def emit(unit: LinkingUnit, builder: JSTreeBuilder, logger: Logger): Unit = {
-    classEmitter = incClassEmitter.newScalaJSClassEmitter(unit)
-    incClassEmitter.beginRun(invalidateMethodCache(classEmitter))
+    linkedClassByName = unit.classDefs.map(c => c.encodedName -> c).toMap
+    classEmitter = incClassEmitter.beginRun(unit, invalidateMethodCache)
     startRun()
     try {
       val orderedClasses = unit.classDefs.sortWith(compareClasses)
@@ -368,21 +369,20 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
 
   // Helpers
 
-  private def invalidateMethodCache(clssEmitter: javascript.ScalaJSClassEmitter)(
-      enclosingClassName: String, methodName: String,
-      isStatic: Boolean): Unit = {
-    val linkedClass = clssEmitter.linkedClassByName(enclosingClassName)
+  private def invalidateMethodCache(enclosingClassName: String,
+      methodName: String, isStatic: Boolean): Unit = {
+    import javascript.ScalaJSClassEmitter._
+
+    val linkedClass = linkedClassByName(enclosingClassName)
     val classCache = getClassCache(linkedClass.ancestors)
     val classTreeCache = classCache.getCache(linkedClass.version)
-    val ctorExportDef = javascript.ScalaJSClassEmitter.ConstructorExportDefName
-    val exportedMember = javascript.ScalaJSClassEmitter.ExportedMemberName
     (methodName, isStatic) match {
-        case (`ctorExportDef` | `exportedMember`, _) =>
-          classTreeCache.exportedMembers.invalidate
+        case (ConstructorExportDefName | ExportedMemberName, _) =>
+          classTreeCache.exportedMembers.invalidate()
         case (_, true) =>
-          classCache.getStaticCache(methodName).invalidate
+          classCache.getStaticCache(methodName).invalidate()
         case _ =>
-          classCache.getMethodCache(methodName).invalidate
+          classCache.getMethodCache(methodName).invalidate()
 
     }
   }
@@ -471,7 +471,7 @@ final class Emitter(semantics: Semantics, outputMode: OutputMode) {
       _tree
     }
 
-    def invalidate: Unit = _tree = null
+    def invalidate(): Unit = _tree = null
 
     def cleanAfterRun(): Boolean = _cacheUsed
   }
@@ -496,7 +496,7 @@ object Emitter {
       value
     }
 
-    def invalidate: Unit = value = null
+    def invalidate(): Unit = value = null
   }
 
   def symbolRequirements(semantics: Semantics, esLevel: ESLevel): SymbolRequirement = {

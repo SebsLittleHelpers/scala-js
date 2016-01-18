@@ -30,7 +30,7 @@ private[rhino] class ScalaJSCoreLib(linkingUnit: LinkingUnit) {
 
 
   private val incClassEmitter =
-    new IncClassEmitter(semantics, ECMAScript51Global)
+    new IncClassEmitter(linkingUnit.semantics, ECMAScript51Global)
 
   private val (providers, exportedSymbols) = {
     val providers = mutable.Map.empty[String, LinkedClass]
