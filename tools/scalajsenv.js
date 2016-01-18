@@ -142,13 +142,28 @@ const $idHashCodeMap = ScalaJS.g["WeakMap"] ? new ScalaJS.g["WeakMap"]() : null;
 //!endif
 //!endif
 
+ScalaJS.ClassData = {};
+
 // Core mechanism
 
-ScalaJS.makeIsArrayOfPrimitive = function(primitiveData) {
+ScalaJS.expandSubtypeArray = function(tags){
+  let expanded = [];
+  let len = 0;
+  for (let i = 0; i < tags.length; i++) {
+    let interval = tags[i];
+    let start = interval[0];
+    let end = interval[1];
+    while(len < start){ len = expanded.push(0); };
+    while(len <= end){ len = expanded.push(1); };
+  }
+  return expanded;
+};
+
+ScalaJS.makeIsArrayOfPrimitive = function(primitiveTag) {
   return function(obj, depth) {
-    return !!(obj && obj.$classData &&
-      (obj.$classData.arrayDepth === depth) &&
-      (obj.$classData.arrayBase === primitiveData));
+    return !!(obj && (obj.$typeTag < 0) &&
+      (((obj.$typeTag >>> 23) & 255) === depth) &&
+      ((obj.$typeTag & 8388607) === primitiveTag));
   }
 };
 
@@ -180,7 +195,7 @@ ScalaJS.propertyName = function(obj) {
 // Runtime functions
 
 ScalaJS.isScalaJSObject = function(obj) {
-  return !!(obj && obj.$classData);
+  return !!(obj && obj.$typeTag);
 };
 
 //!if asInstanceOfs != Unchecked
@@ -276,7 +291,7 @@ ScalaJS.objectGetClass = function(instance) {
       else if (ScalaJS.is.sjsr_RuntimeLong(instance))
         return ScalaJS.d.jl_Long.getClassOf();
       else if (ScalaJS.isScalaJSObject(instance))
-        return instance.$classData.getClassOf();
+        return ScalaJS.ClassData[instance.$typeTag].getClassOf();
       else
         return null; // Exception?
   }
@@ -745,9 +760,10 @@ ScalaJS.TypeData.prototype.initPrim = function(
 //!else
 initPrim(
 //!endif
-    zero, arrayEncodedName, displayName) {
+    zero, arrayEncodedName, displayName, typeTag) {
   // Runtime support
-  this.ancestors = {};
+  this.ancestors = [];
+  this.typeTag = typeTag
   this.componentData = null;
   this.zero = zero;
   this.arrayEncodedName = arrayEncodedName;
@@ -767,21 +783,24 @@ ScalaJS.TypeData.prototype.initClass = function(
 initClass(
 //!endif
     internalNameObj, isInterface, fullName,
-    ancestors, isRawJSType, parentData, isInstance, isArrayOf) {
+    ancestors, typeTag, isRawJSType, parentData, isInstance, isArrayOf) {
   const internalName = ScalaJS.propertyName(internalNameObj);
 
   isInstance = isInstance || function(obj) {
-    return !!(obj && obj.$classData && obj.$classData.ancestors[internalName]);
+    return !!(obj && ScalaJS.ClassData[obj.$typeTag]
+      && (ScalaJS.ClassData[obj.$typeTag].ancestors.indexOf(typeTag) >= 0));
   };
 
   isArrayOf = isArrayOf || function(obj, depth) {
-    return !!(obj && obj.$classData && (obj.$classData.arrayDepth === depth)
-      && obj.$classData.arrayBase.ancestors[internalName])
+    return !!(obj && ScalaJS.ClassData[obj.$typeTag]
+      && (ScalaJS.ClassData[obj.$typeTag].arrayDepth === depth)
+      && (ScalaJS.ClassData[obj.$typeTag].arrayBase.ancestors.indexOf(typeTag) >= 0));
   };
 
   // Runtime support
   this.parentData = parentData;
   this.ancestors = ancestors;
+  this.typeTag = typeTag;
   this.arrayEncodedName = "L"+fullName+";";
   this.isArrayOf = isArrayOf;
 
@@ -859,7 +878,6 @@ initArray(
   };
 //!endif
 
-  ArrayClass.prototype.$classData = this;
 
   // Don't generate reflective call proxies. The compiler special cases
   // reflective calls to methods on scala.Array
@@ -870,6 +888,12 @@ initArray(
   const componentBase = componentData.arrayBase || componentData;
   const arrayDepth = componentData.arrayDepth + 1;
 
+  const typeTag = (((1 << 8) | arrayDepth) << 23) | componentBase.typeTag;
+
+  ArrayClass.prototype.$typeTag = typeTag;
+  ScalaJS.ClassData[typeTag] = this;
+  this.typeTag = typeTag;
+
   const isInstance = function(obj) {
     return componentBase.isArrayOf(obj, arrayDepth);
   }
@@ -877,7 +901,8 @@ initArray(
   // Runtime support
   this.constr = ArrayClass;
   this.parentData = ScalaJS.d.O;
-  this.ancestors = {O: 1, jl_Cloneable: 1, Ljava_io_Serializable: 1};
+  // O, jl_Cloneable, Ljava_io_Serializable
+  this.ancestors = [9, 10, 11];
   this.componentData = componentData;
   this.arrayBase = componentBase;
   this.arrayDepth = arrayDepth;
@@ -939,7 +964,7 @@ ScalaJS.TypeData.prototype["getFakeInstance"] = function() {
   else if (this === ScalaJS.d.sr_BoxedUnit)
     return void 0;
   else
-    return {$classData: this};
+    return {$typeTag: this.typeTag};
 };
 
 //!if outputMode != ECMAScript6
@@ -974,40 +999,40 @@ ScalaJS.TypeData.prototype["newArrayOfThisClass"] = function(lengths) {
 
 // Create primitive types
 
-ScalaJS.d.V = new ScalaJS.TypeData().initPrim(undefined, "V", "void");
-ScalaJS.d.Z = new ScalaJS.TypeData().initPrim(false, "Z", "boolean");
-ScalaJS.d.C = new ScalaJS.TypeData().initPrim(0, "C", "char");
-ScalaJS.d.B = new ScalaJS.TypeData().initPrim(0, "B", "byte");
-ScalaJS.d.S = new ScalaJS.TypeData().initPrim(0, "S", "short");
-ScalaJS.d.I = new ScalaJS.TypeData().initPrim(0, "I", "int");
-ScalaJS.d.J = new ScalaJS.TypeData().initPrim("longZero", "J", "long");
-ScalaJS.d.F = new ScalaJS.TypeData().initPrim(0.0, "F", "float");
-ScalaJS.d.D = new ScalaJS.TypeData().initPrim(0.0, "D", "double");
+ScalaJS.d.V = new ScalaJS.TypeData().initPrim(undefined, "V", "void", 0);
+ScalaJS.d.Z = new ScalaJS.TypeData().initPrim(false, "Z", "boolean", 1);
+ScalaJS.d.C = new ScalaJS.TypeData().initPrim(0, "C", "char", 2);
+ScalaJS.d.B = new ScalaJS.TypeData().initPrim(0, "B", "byte", 3);
+ScalaJS.d.S = new ScalaJS.TypeData().initPrim(0, "S", "short", 4);
+ScalaJS.d.I = new ScalaJS.TypeData().initPrim(0, "I", "int", 5);
+ScalaJS.d.J = new ScalaJS.TypeData().initPrim("longZero", "J", "long", 6);
+ScalaJS.d.F = new ScalaJS.TypeData().initPrim(0.0, "F", "float", 7);
+ScalaJS.d.D = new ScalaJS.TypeData().initPrim(0.0, "D", "double", 8);
 
 // Instance tests for array of primitives
 
-ScalaJS.isArrayOf.Z = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.Z);
+ScalaJS.isArrayOf.Z = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.Z.typeTag);
 ScalaJS.d.Z.isArrayOf = ScalaJS.isArrayOf.Z;
 
-ScalaJS.isArrayOf.C = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.C);
+ScalaJS.isArrayOf.C = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.C.typeTag);
 ScalaJS.d.C.isArrayOf = ScalaJS.isArrayOf.C;
 
-ScalaJS.isArrayOf.B = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.B);
+ScalaJS.isArrayOf.B = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.B.typeTag);
 ScalaJS.d.B.isArrayOf = ScalaJS.isArrayOf.B;
 
-ScalaJS.isArrayOf.S = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.S);
+ScalaJS.isArrayOf.S = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.S.typeTag);
 ScalaJS.d.S.isArrayOf = ScalaJS.isArrayOf.S;
 
-ScalaJS.isArrayOf.I = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.I);
+ScalaJS.isArrayOf.I = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.I.typeTag);
 ScalaJS.d.I.isArrayOf = ScalaJS.isArrayOf.I;
 
-ScalaJS.isArrayOf.J = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.J);
+ScalaJS.isArrayOf.J = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.J.typeTag);
 ScalaJS.d.J.isArrayOf = ScalaJS.isArrayOf.J;
 
-ScalaJS.isArrayOf.F = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.F);
+ScalaJS.isArrayOf.F = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.F.typeTag);
 ScalaJS.d.F.isArrayOf = ScalaJS.isArrayOf.F;
 
-ScalaJS.isArrayOf.D = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.D);
+ScalaJS.isArrayOf.D = ScalaJS.makeIsArrayOfPrimitive(ScalaJS.d.D.typeTag);
 ScalaJS.d.D.isArrayOf = ScalaJS.isArrayOf.D;
 
 //!if asInstanceOfs != Unchecked
