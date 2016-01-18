@@ -66,6 +66,10 @@ object Definitions {
 
   val ExportedConstructorsName = "__exportedInits"
 
+  val ReservedTags = Map("V" -> 0, "Z" -> 1, "C" -> 2, "B" -> 3,
+      "S" -> 4, "I" -> 5, "J" -> 6, "F" -> 7, "D" -> 8,
+      ObjectClass -> 9, CloneableClass -> 10, SerializableClass -> 11)
+
   /** Encodes a class name. */
   def encodeClassName(fullName: String): String = {
     val base = fullName.replace("_", "$und").replace(".", "_")
