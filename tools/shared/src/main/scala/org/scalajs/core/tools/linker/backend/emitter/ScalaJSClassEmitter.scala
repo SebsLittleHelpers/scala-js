@@ -624,22 +624,24 @@ private[scalajs] final class ScalaJSClassEmitter(
 
       val createIsStat = {
         envFieldDef("is", className,
-          js.Function(List(objParam), js.Return(className match {
+          js.Function(List(objParam), className match {
             case Definitions.ObjectClass =>
-              js.BinaryOp(JSBinaryOp.!==, obj, js.Null())
+              js.Return(js.BinaryOp(JSBinaryOp.!==, obj, js.Null()))
 
             case Definitions.StringClass =>
-              js.UnaryOp(JSUnaryOp.typeof, obj) === js.StringLiteral("string")
+              js.Return(js.UnaryOp(JSUnaryOp.typeof, obj) === js.StringLiteral("string"))
 
             case Definitions.RuntimeNothingClass =>
               // Even null is not an instance of Nothing
-              js.BooleanLiteral(false)
+              js.Return(js.BooleanLiteral(false))
 
             case _ =>
-              var test = obj && genIntervalsTest(className, obj DOT "$typeTag")
+              val tagVar = genLet(js.Ident("tag"), mutable = false, obj && (obj DOT "$typeTag"))
+              val tag = tagVar.ref
+              var test = genIntervalsTest(className, tag)
 
               if(isAncestorsOfPseudoArrayClass)
-                test = test || js.BinaryOp(JSBinaryOp.<, obj DOT "$typeTag", js.IntLiteral(0))
+                test = test || js.BinaryOp(JSBinaryOp.<, tag, js.IntLiteral(0))
               if (isAncestorOfString)
                 test = test || (
                     js.UnaryOp(JSUnaryOp.typeof, obj) === js.StringLiteral("string"))
@@ -650,8 +652,8 @@ private[scalajs] final class ScalaJSClassEmitter(
                 test = test || (
                     js.UnaryOp(JSUnaryOp.typeof, obj) === js.StringLiteral("boolean"))
 
-              !(!test)
-          })))
+              js.Block(tagVar, js.Return(!(!test)))
+          }))
       }
 
       val createAsStat = if (semantics.asInstanceOfs == Unchecked) {
