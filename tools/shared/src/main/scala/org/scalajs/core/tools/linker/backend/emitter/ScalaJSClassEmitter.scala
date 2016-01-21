@@ -737,11 +737,12 @@ private[scalajs] final class ScalaJSClassEmitter(
               }))
 
           case _ =>
-            js.Return(!(!({
-              genIsScalaJSArray(obj) &&
-              ((((obj DOT "$typeTag") >> 23) & 255) === depth) &&
-              genIntervalsTest(className, (obj DOT "$typeTag") & 8388607)
-            })))
+            val tagVar = genLet(js.Ident("tag"), mutable = false, obj && (obj DOT "$typeTag"))
+            val tag = tagVar.ref
+            val test = js.BinaryOp(JSBinaryOp.<, tag, js.IntLiteral(0)) &&
+                (((tag >> 23) & 255) === depth) &&
+                genIntervalsTest(className, tag & 8388607)
+            js.Block(tagVar, js.Return(!(!test)))
         }))
     }
 
