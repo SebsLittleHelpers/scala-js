@@ -132,7 +132,7 @@ private[scalajs] final class ScalaJSClassEmitter(
       case _ => 2
     }.sum
 
-    numComparaisons >= 3
+    numComparaisons > 2
   }
 
   private implicit def implicitOutputMode: OutputMode = outputMode
