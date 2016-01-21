@@ -127,7 +127,7 @@ private[scalajs] final class ScalaJSClassEmitter(
   }
 
   private[emitter] def needsSubtypeArray(className: String): Boolean = {
-    val numComparaisons = subtypeIntervals.map{
+    val numComparaisons = subtypeIntervals(className).map{
       case (start, end) if start == end => 1
       case _ => 2
     }.sum
